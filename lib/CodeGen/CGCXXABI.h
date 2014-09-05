@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef CLANG_CODEGEN_CXXABI_H
-#define CLANG_CODEGEN_CXXABI_H
+#ifndef LLVM_CLANG_LIB_CODEGEN_CGCXXABI_H
+#define LLVM_CLANG_LIB_CODEGEN_CGCXXABI_H
 
 #include "CodeGenFunction.h"
 #include "clang/Basic/LLVM.h"
@@ -156,6 +156,11 @@ public:
   /// (in the C++ sense) with an LLVM zeroinitializer.
   virtual bool isZeroInitializable(const MemberPointerType *MPT);
 
+  /// Return whether or not a member pointers type is convertible to an IR type.
+  virtual bool isMemberPointerConvertible(const MemberPointerType *MPT) const {
+    return true;
+  }
+
   /// Create a null member pointer of the given type.
   virtual llvm::Constant *EmitNullMemberPointer(const MemberPointerType *MPT);
 
@@ -206,6 +211,8 @@ public:
   virtual llvm::Value *adjustToCompleteObject(CodeGenFunction &CGF,
                                               llvm::Value *ptr,
                                               QualType type) = 0;
+
+  virtual llvm::Constant *getAddrOfRTTIDescriptor(QualType Ty) = 0;
 
   virtual bool shouldTypeidBeNullChecked(bool IsDeref,
                                          QualType SrcRecordTy) = 0;
@@ -369,8 +376,8 @@ public:
   virtual void EmitVirtualDestructorCall(CodeGenFunction &CGF,
                                          const CXXDestructorDecl *Dtor,
                                          CXXDtorType DtorType,
-                                         SourceLocation CallLoc,
-                                         llvm::Value *This) = 0;
+                                         llvm::Value *This,
+                                         const CXXMemberCallExpr *CE) = 0;
 
   virtual void adjustCallArgsForDestructorThunk(CodeGenFunction &CGF,
                                                 GlobalDecl GD,
@@ -400,10 +407,6 @@ public:
 
   /// Gets the deleted virtual member call name.
   virtual StringRef GetDeletedVirtualCallName() = 0;
-
-  /// \brief Returns true iff static data members that are initialized in the
-  /// class definition should have linkonce linkage.
-  virtual bool isInlineInitializedStaticDataMemberLinkOnce() { return false; }
 
   /**************************** Array cookies ******************************/
 
@@ -516,36 +519,6 @@ public:
   virtual LValue EmitThreadLocalVarDeclLValue(CodeGenFunction &CGF,
                                               const VarDecl *VD,
                                               QualType LValType);
-
-  /**************************** RTTI Uniqueness ******************************/
-
-protected:
-  /// Returns true if the ABI requires RTTI type_info objects to be unique
-  /// across a program.
-  virtual bool shouldRTTIBeUnique() { return true; }
-
-public:
-  /// What sort of unique-RTTI behavior should we use?
-  enum RTTIUniquenessKind {
-    /// We are guaranteeing, or need to guarantee, that the RTTI string
-    /// is unique.
-    RUK_Unique,
-
-    /// We are not guaranteeing uniqueness for the RTTI string, so we
-    /// can demote to hidden visibility but must use string comparisons.
-    RUK_NonUniqueHidden,
-
-    /// We are not guaranteeing uniqueness for the RTTI string, so we
-    /// have to use string comparisons, but we also have to emit it with
-    /// non-hidden visibility.
-    RUK_NonUniqueVisible
-  };
-
-  /// Return the required visibility status for the given type and linkage in
-  /// the current ABI.
-  RTTIUniquenessKind
-  classifyRTTIUniqueness(QualType CanTy,
-                         llvm::GlobalValue::LinkageTypes Linkage);
 };
 
 // Create an instance of a C++ ABI class:

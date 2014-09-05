@@ -38,7 +38,7 @@ protected:
       TargetOpts(new TargetOptions)
   {
     TargetOpts->Triple = "x86_64-apple-darwin11.1.0";
-    Target = TargetInfo::CreateTargetInfo(Diags, &*TargetOpts);
+    Target = TargetInfo::CreateTargetInfo(Diags, TargetOpts);
   }
 
   FileSystemOptions FileMgrOpts;
@@ -47,7 +47,7 @@ protected:
   DiagnosticsEngine Diags;
   SourceManager SourceMgr;
   LangOptions LangOpts;
-  IntrusiveRefCntPtr<TargetOptions> TargetOpts;
+  std::shared_ptr<TargetOptions> TargetOpts;
   IntrusiveRefCntPtr<TargetInfo> Target;
 };
 
@@ -90,12 +90,12 @@ TEST_F(PPConditionalDirectiveRecordTest, PPRecAPI) {
       "#endif\n"
       "9\n";
 
-  MemoryBuffer *buf = MemoryBuffer::getMemBuffer(source);
-  SourceMgr.setMainFileID(SourceMgr.createFileID(buf));
+  std::unique_ptr<MemoryBuffer> Buf = MemoryBuffer::getMemBuffer(source);
+  SourceMgr.setMainFileID(SourceMgr.createFileID(std::move(Buf)));
 
   VoidModuleLoader ModLoader;
   HeaderSearch HeaderInfo(new HeaderSearchOptions, SourceMgr, Diags, LangOpts, 
-                          Target.getPtr());
+                          Target.get());
   Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
                   HeaderInfo, ModLoader,
                   /*IILookup =*/nullptr,

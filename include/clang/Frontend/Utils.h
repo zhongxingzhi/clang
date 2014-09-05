@@ -39,6 +39,7 @@ class Decl;
 class DependencyOutputOptions;
 class DiagnosticsEngine;
 class DiagnosticOptions;
+class ExternalSemaSource;
 class FileManager;
 class HeaderSearch;
 class HeaderSearchOptions;
@@ -62,7 +63,6 @@ void ApplyHeaderSearchOptions(HeaderSearch &HS,
 /// environment ready to process a single file.
 void InitializePreprocessor(Preprocessor &PP,
                             const PreprocessorOptions &PPOpts,
-                            const HeaderSearchOptions &HSOpts,
                             const FrontendOptions &FEOpts);
 
 /// DoPrintPreprocessedInput - Implement -E mode.
@@ -163,6 +163,12 @@ void AttachHeaderIncludeGen(Preprocessor &PP, bool ShowAllHeaders = false,
 /// a seekable stream.
 void CacheTokens(Preprocessor &PP, llvm::raw_fd_ostream* OS);
 
+/// The ChainedIncludesSource class converts headers to chained PCHs in
+/// memory, mainly for testing.
+IntrusiveRefCntPtr<ExternalSemaSource>
+createChainedIncludesSource(CompilerInstance &CI,
+                            IntrusiveRefCntPtr<ExternalSemaSource> &Reader);
+
 /// createInvocationFromCommandLine - Construct a compiler invocation object for
 /// a command line argument vector.
 ///
@@ -200,6 +206,9 @@ inline uint64_t getLastArgUInt64Value(const llvm::opt::ArgList &Args,
 // global objects, but we don't want LeakDetectors to complain, so we bury them
 // in a globally visible array.
 void BuryPointer(const void *Ptr);
+template <typename T> void BuryPointer(std::unique_ptr<T> Ptr) {
+  BuryPointer(Ptr.release());
+}
 
 } // end namespace clang
 

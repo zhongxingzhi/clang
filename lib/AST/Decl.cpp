@@ -38,6 +38,11 @@ Decl *clang::getPrimaryMergedDecl(Decl *D) {
   return D->getASTContext().getPrimaryMergedDecl(D);
 }
 
+// Defined here so that it can be inlined into its direct callers.
+bool Decl::isOutOfLine() const {
+  return !getLexicalDeclContext()->Equals(getDeclContext());
+}
+
 //===----------------------------------------------------------------------===//
 // NamedDecl Implementation
 //===----------------------------------------------------------------------===//
@@ -471,6 +476,58 @@ static void mergeTemplateLV(LinkageInfo &LV,
   LV.mergeExternalVisibility(argsLV);
 }
 
+/// Should we consider visibility associated with the template
+/// arguments and parameters of the given variable template
+/// specialization? As usual, follow class template specialization
+/// logic up to initialization.
+static bool shouldConsiderTemplateVisibility(
+                                 const VarTemplateSpecializationDecl *spec,
+                                 LVComputationKind computation) {
+  // Include visibility from the template parameters and arguments
+  // only if this is not an explicit instantiation or specialization
+  // with direct explicit visibility (and note that implicit
+  // instantiations won't have a direct attribute).
+  if (!spec->isExplicitInstantiationOrSpecialization())
+    return true;
+
+  // An explicit variable specialization is an independent, top-level
+  // declaration.  As such, if it has an explicit visibility attribute,
+  // that must directly express the user's intent, and we should honor
+  // it.
+  if (spec->isExplicitSpecialization() &&
+      hasExplicitVisibilityAlready(computation))
+    return false;
+
+  return !hasDirectVisibilityAttribute(spec, computation);
+}
+
+/// Merge in template-related linkage and visibility for the given
+/// variable template specialization. As usual, follow class template
+/// specialization logic up to initialization.
+static void mergeTemplateLV(LinkageInfo &LV,
+                            const VarTemplateSpecializationDecl *spec,
+                            LVComputationKind computation) {
+  bool considerVisibility = shouldConsiderTemplateVisibility(spec, computation);
+
+  // Merge information from the template parameters, but ignore
+  // visibility if we're only considering template arguments.
+
+  VarTemplateDecl *temp = spec->getSpecializedTemplate();
+  LinkageInfo tempLV =
+    getLVForTemplateParameterList(temp->getTemplateParameters(), computation);
+  LV.mergeMaybeWithVisibility(tempLV,
+           considerVisibility && !hasExplicitVisibilityAlready(computation));
+
+  // Merge information from the template arguments.  We ignore
+  // template-argument visibility if we've got an explicit
+  // instantiation with a visibility attribute.
+  const TemplateArgumentList &templateArgs = spec->getTemplateArgs();
+  LinkageInfo argsLV = getLVForTemplateArgumentList(templateArgs, computation);
+  if (considerVisibility)
+    LV.mergeVisibility(argsLV);
+  LV.mergeExternalVisibility(argsLV);
+}
+
 static bool useInlineVisibilityHidden(const NamedDecl *D) {
   // FIXME: we should warn if -fvisibility-inlines-hidden is used with c.
   const LangOptions &Opts = D->getASTContext().getLangOpts();
@@ -662,6 +719,14 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
     // C99 6.2.2p4 and propagating the visibility attribute, so we don't have
     // to do it here.
 
+    // As per function and class template specializations (below),
+    // consider LV for the template and template arguments.  We're at file
+    // scope, so we do not need to worry about nested specializations.
+    if (const VarTemplateSpecializationDecl *spec
+              = dyn_cast<VarTemplateSpecializationDecl>(Var)) {
+      mergeTemplateLV(LV, spec, computation);
+    }
+
   //     - a function, unless it has internal linkage; or
   } else if (const FunctionDecl *Function = dyn_cast<FunctionDecl>(D)) {
     // In theory, we can modify the function's LV by the LV of its
@@ -751,6 +816,8 @@ static LinkageInfo getLVForNamespaceScopeDecl(const NamedDecl *D,
 
   // Everything not covered here has no linkage.
   } else {
+    // FIXME: A typedef declaration has linkage if it gives a type a name for
+    // linkage purposes.
     return LinkageInfo::none();
   }
 
@@ -869,6 +936,10 @@ static LinkageInfo getLVForClassMember(const NamedDecl *D,
 
   // Static data members.
   } else if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
+    if (const VarTemplateSpecializationDecl *spec
+        = dyn_cast<VarTemplateSpecializationDecl>(VD))
+      mergeTemplateLV(LV, spec, computation);
+
     // Modify the variable's linkage by its type, but ignore the
     // type's visibility unless it's a definition.
     LinkageInfo typeLV = getLVForType(*VD->getType(), computation);
@@ -2543,7 +2614,7 @@ void FunctionDecl::setDeclsInPrototypeScope(ArrayRef<NamedDecl *> NewDecls) {
   if (!NewDecls.empty()) {
     NamedDecl **A = new (getASTContext()) NamedDecl*[NewDecls.size()];
     std::copy(NewDecls.begin(), NewDecls.end(), A);
-    DeclsInPrototypeScope = ArrayRef<NamedDecl *>(A, NewDecls.size());
+    DeclsInPrototypeScope = llvm::makeArrayRef(A, NewDecls.size());
     // Move declarations introduced in prototype to the function context.
     for (auto I : NewDecls) {
       DeclContext *DC = I->getDeclContext();
@@ -2685,6 +2756,26 @@ bool FunctionDecl::doesDeclarationForceExternallyVisibleDefinition() const {
       return false;
   }
   return FoundBody;
+}
+
+SourceRange FunctionDecl::getReturnTypeSourceRange() const {
+  const TypeSourceInfo *TSI = getTypeSourceInfo();
+  if (!TSI)
+    return SourceRange();
+  FunctionTypeLoc FTL =
+      TSI->getTypeLoc().IgnoreParens().getAs<FunctionTypeLoc>();
+  if (!FTL)
+    return SourceRange();
+
+  // Skip self-referential return types.
+  const SourceManager &SM = getASTContext().getSourceManager();
+  SourceRange RTRange = FTL.getReturnLoc().getSourceRange();
+  SourceLocation Boundary = getNameInfo().getLocStart();
+  if (RTRange.isInvalid() || Boundary.isInvalid() ||
+      !SM.isBeforeInTranslationUnit(RTRange.getEnd(), Boundary))
+    return SourceRange();
+
+  return RTRange;
 }
 
 /// \brief For an inline function definition in C, or for a gnu_inline function
@@ -3175,9 +3266,18 @@ bool FieldDecl::isAnonymousStructOrUnion() const {
   return false;
 }
 
+bool FieldDecl::isBitField() const {
+  if (getInClassInitStyle() == ICIS_NoInit &&
+      InitializerOrBitWidth.getPointer()) {
+    assert(getDeclContext() && "No parent context for FieldDecl");
+    return !getDeclContext()->isRecord() || !getParent()->isLambda();
+  }
+  return false;
+}
+
 unsigned FieldDecl::getBitWidthValue(const ASTContext &Ctx) const {
   assert(isBitField() && "not a bitfield");
-  Expr *BitWidth = InitializerOrBitWidth.getPointer();
+  Expr *BitWidth = static_cast<Expr *>(InitializerOrBitWidth.getPointer());
   return BitWidth->EvaluateKnownConstInt(Ctx).getZExtValue();
 }
 
@@ -3191,30 +3291,44 @@ unsigned FieldDecl::getFieldIndex() const {
   unsigned Index = 0;
   const RecordDecl *RD = getParent();
 
-  for (RecordDecl::field_iterator I = RD->field_begin(), E = RD->field_end();
-       I != E; ++I, ++Index)
-    I->getCanonicalDecl()->CachedFieldIndex = Index + 1;
+  for (auto *Field : RD->fields()) {
+    Field->getCanonicalDecl()->CachedFieldIndex = Index + 1;
+    ++Index;
+  }
 
   assert(CachedFieldIndex && "failed to find field in parent");
   return CachedFieldIndex - 1;
 }
 
 SourceRange FieldDecl::getSourceRange() const {
-  if (const Expr *E = InitializerOrBitWidth.getPointer())
+  if (const Expr *E =
+          static_cast<const Expr *>(InitializerOrBitWidth.getPointer()))
     return SourceRange(getInnerLocStart(), E->getLocEnd());
   return DeclaratorDecl::getSourceRange();
 }
 
 void FieldDecl::setBitWidth(Expr *Width) {
   assert(!InitializerOrBitWidth.getPointer() && !hasInClassInitializer() &&
-         "bit width or initializer already set");
+         "bit width, initializer or captured type already set");
   InitializerOrBitWidth.setPointer(Width);
 }
 
 void FieldDecl::setInClassInitializer(Expr *Init) {
   assert(!InitializerOrBitWidth.getPointer() && hasInClassInitializer() &&
-         "bit width or initializer already set");
+         "bit width, initializer or captured expr already set");
   InitializerOrBitWidth.setPointer(Init);
+}
+
+bool FieldDecl::hasCapturedVLAType() const {
+  return getDeclContext()->isRecord() && getParent()->isLambda() &&
+         InitializerOrBitWidth.getPointer();
+}
+
+void FieldDecl::setCapturedVLAType(const VariableArrayType *VLAType) {
+  assert(getParent()->isLambda() && "capturing type in non-lambda.");
+  assert(!InitializerOrBitWidth.getPointer() && !hasInClassInitializer() &&
+         "bit width, initializer or captured type already set");
+  InitializerOrBitWidth.setPointer(const_cast<VariableArrayType *>(VLAType));
 }
 
 //===----------------------------------------------------------------------===//
@@ -3435,6 +3549,12 @@ RecordDecl *RecordDecl::CreateDeserialized(const ASTContext &C, unsigned ID) {
 bool RecordDecl::isInjectedClassName() const {
   return isImplicit() && getDeclName() && getDeclContext()->isRecord() &&
     cast<RecordDecl>(getDeclContext())->getDeclName() == getDeclName();
+}
+
+bool RecordDecl::isLambda() const {
+  if (auto RD = dyn_cast<CXXRecordDecl>(this))
+    return RD->isLambda();
+  return false;
 }
 
 RecordDecl::field_iterator RecordDecl::field_begin() const {
@@ -3808,8 +3928,8 @@ ArrayRef<SourceLocation> ImportDecl::getIdentifierLocs() const {
 
   const SourceLocation *StoredLocs
     = reinterpret_cast<const SourceLocation *>(this + 1);
-  return ArrayRef<SourceLocation>(StoredLocs, 
-                                  getNumModuleIdentifiers(getImportedModule()));
+  return llvm::makeArrayRef(StoredLocs,
+                            getNumModuleIdentifiers(getImportedModule()));
 }
 
 SourceRange ImportDecl::getSourceRange() const {

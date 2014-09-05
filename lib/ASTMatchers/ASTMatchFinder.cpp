@@ -372,7 +372,7 @@ public:
                                   BoundNodesTreeBuilder *Builder, int MaxDepth,
                                   TraversalKind Traversal, BindKind Bind) {
     // For AST-nodes that don't have an identity, we can't memoize.
-    if (!Node.getMemoizationData())
+    if (!Node.getMemoizationData() || !Builder->isComparable())
       return matchesRecursively(Node, Matcher, Builder, MaxDepth, Traversal,
                                 Bind);
 
@@ -731,7 +731,8 @@ bool MatchASTVisitor::TraverseNestedNameSpecifierLoc(
   match(NNS);
   // We only match the nested name specifier here (as opposed to traversing it)
   // because the traversal is already done in the parallel "Loc"-hierarchy.
-  match(*NNS.getNestedNameSpecifier());
+  if (NNS.hasQualifier())
+    match(*NNS.getNestedNameSpecifier());
   return
       RecursiveASTVisitor<MatchASTVisitor>::TraverseNestedNameSpecifierLoc(NNS);
 }
@@ -823,8 +824,8 @@ bool MatchFinder::addDynamicMatcher(const internal::DynTypedMatcher &NodeMatch,
   return false;
 }
 
-ASTConsumer *MatchFinder::newASTConsumer() {
-  return new internal::MatchASTConsumer(this, ParsingDone);
+std::unique_ptr<ASTConsumer> MatchFinder::newASTConsumer() {
+  return llvm::make_unique<internal::MatchASTConsumer>(this, ParsingDone);
 }
 
 void MatchFinder::match(const clang::ast_type_traits::DynTypedNode &Node,

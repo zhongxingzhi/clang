@@ -152,6 +152,12 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
                               diag::err_asm_invalid_lvalue_in_input)
                          << Info.getConstraintStr()
                          << InputExpr->getSourceRange());
+    } else {
+      ExprResult Result = DefaultFunctionArrayLvalueConversion(Exprs[i]);
+      if (Result.isInvalid())
+        return StmtError();
+
+      Exprs[i] = Result.get();
     }
 
     if (Info.allowsRegister()) {
@@ -163,11 +169,6 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
       }
     }
 
-    ExprResult Result = DefaultFunctionArrayLvalueConversion(Exprs[i]);
-    if (Result.isInvalid())
-      return StmtError();
-
-    Exprs[i] = Result.get();
     InputConstraintInfos.push_back(Info);
 
     const Type *Ty = Exprs[i]->getType().getTypePtr();
@@ -256,11 +257,22 @@ StmtResult Sema::ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
       continue;
 
     unsigned Size = Context.getTypeSize(Ty);
-    if (!Context.getTargetInfo()
-          .validateConstraintModifier(Literal->getString(), Piece.getModifier(),
-                                      Size))
+    std::string SuggestedModifier;
+    if (!Context.getTargetInfo().validateConstraintModifier(
+            Literal->getString(), Piece.getModifier(), Size,
+            SuggestedModifier)) {
       Diag(Exprs[ConstraintIdx]->getLocStart(),
            diag::warn_asm_mismatched_size_modifier);
+
+      if (!SuggestedModifier.empty()) {
+        auto B = Diag(Piece.getRange().getBegin(),
+                      diag::note_asm_missing_constraint_modifier)
+                 << SuggestedModifier;
+        SuggestedModifier = "%" + SuggestedModifier + Piece.getString();
+        B.AddFixItHint(FixItHint::CreateReplacement(Piece.getRange(),
+                                                    SuggestedModifier));
+      }
+    }
   }
 
   // Validate tied input operands for type mismatches.
@@ -392,6 +404,19 @@ ExprResult Sema::LookupInlineAsmIdentifier(CXXScopeSpec &SS,
 
   Result = CheckPlaceholderExpr(Result.get());
   if (!Result.isUsable()) return Result;
+
+  // Referring to parameters is not allowed in naked functions.
+  if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(Result.get())) {
+    if (ParmVarDecl *Parm = dyn_cast<ParmVarDecl>(DRE->getDecl())) {
+      if (FunctionDecl *Func = dyn_cast<FunctionDecl>(Parm->getDeclContext())) {
+        if (Func->hasAttr<NakedAttr>()) {
+          Diag(Id.getLocStart(), diag::err_asm_naked_parm_ref);
+          Diag(Func->getAttr<NakedAttr>()->getLocation(), diag::note_attribute);
+          return ExprError();
+        }
+      }
+    }
+  }
 
   QualType T = Result.get()->getType();
 

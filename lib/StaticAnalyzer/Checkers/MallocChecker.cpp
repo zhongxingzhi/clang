@@ -15,6 +15,7 @@
 #include "ClangSACheckers.h"
 #include "InterCheckerAPI.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/ParentMap.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/StaticAnalyzer/Core/BugReporter/BugType.h"
@@ -419,9 +420,9 @@ private:
                                    BugReporterContext &BRC,
                                    BugReport &BR) override;
 
-    PathDiagnosticPiece* getEndPath(BugReporterContext &BRC,
-                                    const ExplodedNode *EndPathNode,
-                                    BugReport &BR) override {
+    std::unique_ptr<PathDiagnosticPiece>
+    getEndPath(BugReporterContext &BRC, const ExplodedNode *EndPathNode,
+               BugReport &BR) override {
       if (!IsLeak)
         return nullptr;
 
@@ -429,7 +430,8 @@ private:
         PathDiagnosticLocation::createEndOfPath(EndPathNode,
                                                 BRC.getSourceManager());
       // Do not add the statement itself as a range in case of leak.
-      return new PathDiagnosticEventPiece(L, BR.getDescription(), false);
+      return llvm::make_unique<PathDiagnosticEventPiece>(L, BR.getDescription(),
+                                                         false);
     }
 
   private:
@@ -753,6 +755,42 @@ void MallocChecker::checkPostStmt(const CallExpr *CE, CheckerContext &C) const {
   C.addTransition(State);
 }
 
+static QualType getDeepPointeeType(QualType T) {
+  QualType Result = T, PointeeType = T->getPointeeType();
+  while (!PointeeType.isNull()) {
+    Result = PointeeType;
+    PointeeType = PointeeType->getPointeeType();
+  }
+  return Result;
+}
+
+static bool treatUnusedNewEscaped(const CXXNewExpr *NE) {
+
+  const CXXConstructExpr *ConstructE = NE->getConstructExpr();
+  if (!ConstructE)
+    return false;
+
+  if (!NE->getAllocatedType()->getAsCXXRecordDecl())
+    return false;
+
+  const CXXConstructorDecl *CtorD = ConstructE->getConstructor();
+
+  // Iterate over the constructor parameters.
+  for (const auto *CtorParam : CtorD->params()) {
+
+    QualType CtorParamPointeeT = CtorParam->getType()->getPointeeType();
+    if (CtorParamPointeeT.isNull())
+      continue;
+
+    CtorParamPointeeT = getDeepPointeeType(CtorParamPointeeT);
+
+    if (CtorParamPointeeT->getAsCXXRecordDecl())
+      return true;
+  }
+
+  return false;
+}
+
 void MallocChecker::checkPostStmt(const CXXNewExpr *NE, 
                                   CheckerContext &C) const {
 
@@ -763,6 +801,10 @@ void MallocChecker::checkPostStmt(const CXXNewExpr *NE,
         checkUseAfterFree(Sym, C, *I);
 
   if (!isStandardNewDelete(NE->getOperatorNew(), C.getASTContext()))
+    return;
+
+  ParentMap &PM = C.getLocationContext()->getParentMap();
+  if (!PM.isConsumedExpr(NE) && treatUnusedNewEscaped(NE))
     return;
 
   ProgramStateRef State = C.getState();
@@ -1425,7 +1467,7 @@ void MallocChecker::ReportMismatchedDealloc(CheckerContext &C,
     BugReport *R = new BugReport(*BT_MismatchedDealloc, os.str(), N);
     R->markInteresting(Sym);
     R->addRange(Range);
-    R->addVisitor(new MallocBugVisitor(Sym));
+    R->addVisitor(llvm::make_unique<MallocBugVisitor>(Sym));
     C.emitReport(R);
   }
 }
@@ -1509,7 +1551,7 @@ void MallocChecker::ReportUseAfterFree(CheckerContext &C, SourceRange Range,
 
     R->markInteresting(Sym);
     R->addRange(Range);
-    R->addVisitor(new MallocBugVisitor(Sym));
+    R->addVisitor(llvm::make_unique<MallocBugVisitor>(Sym));
     C.emitReport(R);
   }
 }
@@ -1541,7 +1583,7 @@ void MallocChecker::ReportDoubleFree(CheckerContext &C, SourceRange Range,
     R->markInteresting(Sym);
     if (PrevSym)
       R->markInteresting(PrevSym);
-    R->addVisitor(new MallocBugVisitor(Sym));
+    R->addVisitor(llvm::make_unique<MallocBugVisitor>(Sym));
     C.emitReport(R);
   }
 }
@@ -1565,7 +1607,7 @@ void MallocChecker::ReportDoubleDelete(CheckerContext &C, SymbolRef Sym) const {
                                  "Attempt to delete released memory", N);
 
     R->markInteresting(Sym);
-    R->addVisitor(new MallocBugVisitor(Sym));
+    R->addVisitor(llvm::make_unique<MallocBugVisitor>(Sym));
     C.emitReport(R);
   }
 }
@@ -1793,7 +1835,7 @@ void MallocChecker::reportLeak(SymbolRef Sym, ExplodedNode *N,
       new BugReport(*BT_Leak[*CheckKind], os.str(), N, LocUsedForUniqueing,
                     AllocNode->getLocationContext()->getDecl());
   R->markInteresting(Sym);
-  R->addVisitor(new MallocBugVisitor(Sym, true));
+  R->addVisitor(llvm::make_unique<MallocBugVisitor>(Sym, true));
   C.emitReport(R);
 }
 

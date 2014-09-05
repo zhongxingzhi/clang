@@ -126,8 +126,13 @@ std::error_code RealFile::getBuffer(const Twine &Name,
                                     bool RequiresNullTerminator,
                                     bool IsVolatile) {
   assert(FD != -1 && "cannot get buffer for closed file");
-  return MemoryBuffer::getOpenFile(FD, Name.str().c_str(), Result, FileSize,
-                                   RequiresNullTerminator, IsVolatile);
+  ErrorOr<std::unique_ptr<MemoryBuffer>> BufferOrErr =
+      MemoryBuffer::getOpenFile(FD, Name.str().c_str(), FileSize,
+                                RequiresNullTerminator, IsVolatile);
+  if (std::error_code EC = BufferOrErr.getError())
+    return EC;
+  Result = std::move(BufferOrErr.get());
+  return std::error_code();
 }
 
 // FIXME: This is terrible, we need this for ::close.
@@ -509,9 +514,7 @@ public:
 
   /// \brief Parses \p Buffer, which is expected to be in YAML format and
   /// returns a virtual file system representing its contents.
-  ///
-  /// Takes ownership of \p Buffer.
-  static VFSFromYAML *create(MemoryBuffer *Buffer,
+  static VFSFromYAML *create(std::unique_ptr<MemoryBuffer> Buffer,
                              SourceMgr::DiagHandlerTy DiagHandler,
                              void *DiagContext,
                              IntrusiveRefCntPtr<FileSystem> ExternalFS);
@@ -860,13 +863,13 @@ DirectoryEntry::~DirectoryEntry() { llvm::DeleteContainerPointers(Contents); }
 
 VFSFromYAML::~VFSFromYAML() { llvm::DeleteContainerPointers(Roots); }
 
-VFSFromYAML *VFSFromYAML::create(MemoryBuffer *Buffer,
+VFSFromYAML *VFSFromYAML::create(std::unique_ptr<MemoryBuffer> Buffer,
                                  SourceMgr::DiagHandlerTy DiagHandler,
                                  void *DiagContext,
                                  IntrusiveRefCntPtr<FileSystem> ExternalFS) {
 
   SourceMgr SM;
-  yaml::Stream Stream(Buffer, SM);
+  yaml::Stream Stream(Buffer->getMemBufferRef(), SM);
 
   SM.setDiagHandler(DiagHandler, DiagContext);
   yaml::document_iterator DI = Stream.begin();
@@ -988,10 +991,11 @@ VFSFromYAML::openFileForRead(const Twine &Path,
 }
 
 IntrusiveRefCntPtr<FileSystem>
-vfs::getVFSFromYAML(MemoryBuffer *Buffer, SourceMgr::DiagHandlerTy DiagHandler,
-                    void *DiagContext,
+vfs::getVFSFromYAML(std::unique_ptr<MemoryBuffer> Buffer,
+                    SourceMgr::DiagHandlerTy DiagHandler, void *DiagContext,
                     IntrusiveRefCntPtr<FileSystem> ExternalFS) {
-  return VFSFromYAML::create(Buffer, DiagHandler, DiagContext, ExternalFS);
+  return VFSFromYAML::create(std::move(Buffer), DiagHandler, DiagContext,
+                             ExternalFS);
 }
 
 UniqueID vfs::getNextVirtualUniqueID() {
@@ -1096,35 +1100,34 @@ void JSONWriter::write(ArrayRef<YAMLVFSEntry> Entries,
        << (IsCaseSensitive.getValue() ? "true" : "false") << "',\n";
   OS << "  'roots': [\n";
 
-  if (Entries.empty())
-    return;
-
-  const YAMLVFSEntry &Entry = Entries.front();
-  startDirectory(path::parent_path(Entry.VPath));
-  writeEntry(path::filename(Entry.VPath), Entry.RPath);
-
-  for (const auto &Entry : Entries.slice(1)) {
-    StringRef Dir = path::parent_path(Entry.VPath);
-    if (Dir == DirStack.back())
-      OS << ",\n";
-    else {
-      while (!DirStack.empty() && !containedIn(DirStack.back(), Dir)) {
-        OS << "\n";
-        endDirectory();
-      }
-      OS << ",\n";
-      startDirectory(Dir);
-    }
+  if (!Entries.empty()) {
+    const YAMLVFSEntry &Entry = Entries.front();
+    startDirectory(path::parent_path(Entry.VPath));
     writeEntry(path::filename(Entry.VPath), Entry.RPath);
-  }
 
-  while (!DirStack.empty()) {
+    for (const auto &Entry : Entries.slice(1)) {
+      StringRef Dir = path::parent_path(Entry.VPath);
+      if (Dir == DirStack.back())
+        OS << ",\n";
+      else {
+        while (!DirStack.empty() && !containedIn(DirStack.back(), Dir)) {
+          OS << "\n";
+          endDirectory();
+        }
+        OS << ",\n";
+        startDirectory(Dir);
+      }
+      writeEntry(path::filename(Entry.VPath), Entry.RPath);
+    }
+
+    while (!DirStack.empty()) {
+      OS << "\n";
+      endDirectory();
+    }
     OS << "\n";
-    endDirectory();
   }
 
-  OS << "\n"
-     << "  ]\n"
+  OS << "  ]\n"
      << "}\n";
 }
 

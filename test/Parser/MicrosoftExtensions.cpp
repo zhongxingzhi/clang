@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -std=c++11 -fsyntax-only -Wno-unused-value -Wmicrosoft -verify -fms-extensions -fms-compatibility -fdelayed-template-parsing
+// RUN: %clang_cc1 %s -triple i386-mingw32 -std=c++11 -fsyntax-only -Wno-unused-value -Wmicrosoft -verify -fms-extensions -fms-compatibility -fdelayed-template-parsing
 
 /* Microsoft attribute tests */
 [repeatable][source_annotation_attribute( Parameter|ReturnValue )]
@@ -118,7 +118,7 @@ typedef COM_CLASS_TEMPLATE_REF<struct_with_uuid, __uuidof(struct_with_uuid)> COM
 
 COM_CLASS_TEMPLATE_REF<int, __uuidof(struct_with_uuid)> good_template_arg;
 
-COM_CLASS_TEMPLATE<int, __uuidof(struct_with_uuid)> bad_template_arg; // expected-error {{non-type template argument of type 'const _GUID' cannot be converted to a value of type 'const GUID *' (aka 'const _GUID *')}}
+COM_CLASS_TEMPLATE<int, __uuidof(struct_with_uuid)> bad_template_arg; // expected-error {{non-type template argument of type 'const _GUID' is not a constant expression}}
 
 namespace PR16911 {
 struct __declspec(uuid("{12345678-1234-1234-1234-1234567890aB}")) uuid;
@@ -226,6 +226,11 @@ void interface_test() {
 }
 
 __int64 x7 = __int64(0);
+_int64 x8 = _int64(0);
+static_assert(sizeof(_int64) == 8, "");
+static_assert(sizeof(_int32) == 4, "");
+static_assert(sizeof(_int16) == 2, "");
+static_assert(sizeof(_int8) == 1, "");
 
 int __identifier(generic) = 3;
 int __identifier(int) = 4;
@@ -332,3 +337,32 @@ void TestProperty() {
 
 //expected-warning@+1 {{C++ operator 'and' (aka '&&') used as a macro name}}
 #define and foo
+
+struct __declspec(uuid("00000000-0000-0000-C000-000000000046")) __declspec(novtable) IUnknown {}; // expected-warning{{__declspec attribute 'novtable' is not supported}}
+
+typedef bool (__stdcall __stdcall *blarg)(int);
+
+void local_callconv() {
+  bool (__stdcall *p)(int);
+}
+
+struct S7 {
+	int foo() { return 12; }
+	__declspec(property(get=foo) deprecated) int t; // expected-note {{'t' has been explicitly marked deprecated here}}
+};
+
+// Technically, this is legal (though it does nothing)
+__declspec() void quux( void ) {
+  struct S7 s;
+  int i = s.t;	// expected-warning {{'t' is deprecated}}
+}
+
+void *_alloca(int);
+
+void foo(void) {
+  __declspec(align(16)) int *buffer = (int *)_alloca(9);
+}
+
+template <int *>
+struct NullptrArg {};
+NullptrArg<nullptr> a;

@@ -377,6 +377,11 @@ TEST(DeclarationMatcher, hasDeclContext) {
                           hasName("M"), hasDeclContext(namespaceDecl()))))));
 }
 
+TEST(DeclarationMatcher, LinkageSpecification) {
+  EXPECT_TRUE(matches("extern \"C\" { void foo() {}; }", linkageSpecDecl()));
+  EXPECT_TRUE(notMatches("void foo() {};", linkageSpecDecl()));
+}
+
 TEST(ClassTemplate, DoesNotMatchClass) {
   DeclarationMatcher ClassX = classTemplateDecl(hasName("X"));
   EXPECT_TRUE(notMatches("class X;", ClassX));
@@ -641,6 +646,31 @@ TEST(DeclarationMatcher, HasDescendant) {
       "    };"
       "  };"
       "};", ZDescendantClassXDescendantClassY));
+}
+
+TEST(DeclarationMatcher, HasDescendantMemoization) {
+  DeclarationMatcher CannotMemoize =
+      decl(hasDescendant(typeLoc().bind("x")), has(decl()));
+  EXPECT_TRUE(matches("void f() { int i; }", CannotMemoize));
+}
+
+TEST(DeclarationMatcher, HasAttr) {
+  EXPECT_TRUE(matches("struct __attribute__((warn_unused)) X {};",
+                      decl(hasAttr(clang::attr::WarnUnused))));
+  EXPECT_FALSE(matches("struct X {};",
+                       decl(hasAttr(clang::attr::WarnUnused))));
+}
+
+TEST(DeclarationMatcher, MatchCudaDecl) {
+  EXPECT_TRUE(matchesWithCuda("__global__ void f() { }"
+                              "void g() { f<<<1, 2>>>(); }",
+                              CUDAKernelCallExpr()));
+  EXPECT_TRUE(matchesWithCuda("__attribute__((device)) void f() {}",
+                              hasAttr(clang::attr::CUDADevice)));
+  EXPECT_TRUE(notMatchesWithCuda("void f() {}",
+                                 CUDAKernelCallExpr()));
+  EXPECT_FALSE(notMatchesWithCuda("__attribute__((global)) void f() {}",
+                                  hasAttr(clang::attr::CUDAGlobal)));
 }
 
 // Implements a run method that returns whether BoundNodes contains a
@@ -1095,12 +1125,19 @@ TEST(Matcher, HasOperatorNameForOverloadedOperatorCall) {
               "bool operator&&(Y x, Y y) { return true; }; "
               "Y a; Y b; bool c = a && b;",
               OpCallLessLess));
+  StatementMatcher OpStarCall =
+      operatorCallExpr(hasOverloadedOperatorName("*"));
+  EXPECT_TRUE(matches("class Y; int operator*(Y &); void f(Y &y) { *y; }",
+              OpStarCall));
   DeclarationMatcher ClassWithOpStar =
     recordDecl(hasMethod(hasOverloadedOperatorName("*")));
   EXPECT_TRUE(matches("class Y { int operator*(); };",
                       ClassWithOpStar));
   EXPECT_TRUE(notMatches("class Y { void myOperator(); };",
               ClassWithOpStar)) ;
+  DeclarationMatcher AnyOpStar = functionDecl(hasOverloadedOperatorName("*"));
+  EXPECT_TRUE(matches("class Y; int operator*(Y &);", AnyOpStar));
+  EXPECT_TRUE(matches("class Y { int operator*(); };", AnyOpStar));
 }
 
 TEST(Matcher, NestedOverloadedOperatorCalls) {
@@ -1495,6 +1532,13 @@ TEST(IsExternC, MatchesExternCFunctionDeclarations) {
   EXPECT_TRUE(matches("extern \"C\" { void f() {} }",
               functionDecl(isExternC())));
   EXPECT_TRUE(notMatches("void f() {}", functionDecl(isExternC())));
+}
+
+TEST(IsDeleted, MatchesDeletedFunctionDeclarations) {
+  EXPECT_TRUE(
+      notMatches("void Func();", functionDecl(hasName("Func"), isDeleted())));
+  EXPECT_TRUE(matches("void Func() = delete;",
+                      functionDecl(hasName("Func"), isDeleted())));
 }
 
 TEST(HasAnyParameter, DoesntMatchIfInnerMatcherDoesntMatch) {
@@ -3031,6 +3075,13 @@ TEST(UsingDeclaration, ThroughUsingDeclaration) {
       declRefExpr(throughUsingDecl(anything()))));
 }
 
+TEST(UsingDirectiveDeclaration, MatchesUsingNamespace) {
+  EXPECT_TRUE(matches("namespace X { int x; } using namespace X;",
+                      usingDirectiveDecl()));
+  EXPECT_FALSE(
+      matches("namespace X { int x; } using X::x;", usingDirectiveDecl()));
+}
+
 TEST(SingleDecl, IsSingleDecl) {
   StatementMatcher SingleDeclStmt =
       declStmt(hasSingleDecl(varDecl(hasInitializer(anything()))));
@@ -3456,6 +3507,62 @@ TEST(IsTemplateInstantiation, DoesNotMatchNonTemplate) {
   EXPECT_TRUE(notMatches(
       "class A {}; class Y { A a; };",
       recordDecl(isTemplateInstantiation())));
+}
+
+TEST(IsInstantiated, MatchesInstantiation) {
+  EXPECT_TRUE(
+      matches("template<typename T> class A { T i; }; class Y { A<int> a; };",
+              recordDecl(isInstantiated())));
+}
+
+TEST(IsInstantiated, NotMatchesDefinition) {
+  EXPECT_TRUE(notMatches("template<typename T> class A { T i; };",
+                         recordDecl(isInstantiated())));
+}
+
+TEST(IsInTemplateInstantiation, MatchesInstantiationStmt) {
+  EXPECT_TRUE(matches("template<typename T> struct A { A() { T i; } };"
+                      "class Y { A<int> a; }; Y y;",
+                      declStmt(isInTemplateInstantiation())));
+}
+
+TEST(IsInTemplateInstantiation, NotMatchesDefinitionStmt) {
+  EXPECT_TRUE(notMatches("template<typename T> struct A { void x() { T i; } };",
+                         declStmt(isInTemplateInstantiation())));
+}
+
+TEST(IsInstantiated, MatchesFunctionInstantiation) {
+  EXPECT_TRUE(
+      matches("template<typename T> void A(T t) { T i; } void x() { A(0); }",
+              functionDecl(isInstantiated())));
+}
+
+TEST(IsInstantiated, NotMatchesFunctionDefinition) {
+  EXPECT_TRUE(notMatches("template<typename T> void A(T t) { T i; }",
+                         varDecl(isInstantiated())));
+}
+
+TEST(IsInTemplateInstantiation, MatchesFunctionInstantiationStmt) {
+  EXPECT_TRUE(
+      matches("template<typename T> void A(T t) { T i; } void x() { A(0); }",
+              declStmt(isInTemplateInstantiation())));
+}
+
+TEST(IsInTemplateInstantiation, NotMatchesFunctionDefinitionStmt) {
+  EXPECT_TRUE(notMatches("template<typename T> void A(T t) { T i; }",
+                         declStmt(isInTemplateInstantiation())));
+}
+
+TEST(IsInTemplateInstantiation, Sharing) {
+  auto Matcher = binaryOperator(unless(isInTemplateInstantiation()));
+  // FIXME: Node sharing is an implementation detail, exposing it is ugly
+  // and makes the matcher behave in non-obvious ways.
+  EXPECT_TRUE(notMatches(
+      "int j; template<typename T> void A(T t) { j += 42; } void x() { A(0); }",
+      Matcher));
+  EXPECT_TRUE(matches(
+      "int j; template<typename T> void A(T t) { j += t; } void x() { A(0); }",
+      Matcher));
 }
 
 TEST(IsExplicitTemplateSpecialization,
@@ -4149,8 +4256,8 @@ public:
 
   virtual bool run(const BoundNodes *Nodes, ASTContext *Context) {
     const T *Node = Nodes->getNodeAs<T>(Id);
-    return selectFirst<const T>(InnerId,
-                                match(InnerMatcher, *Node, *Context)) !=nullptr;
+    return selectFirst<T>(InnerId, match(InnerMatcher, *Node, *Context)) !=
+           nullptr;
   }
 private:
   std::string Id;
@@ -4207,7 +4314,7 @@ public:
     // Use the original typed pointer to verify we can pass pointers to subtypes
     // to equalsNode.
     const T *TypedNode = cast<T>(Node);
-    return selectFirst<const T>(
+    return selectFirst<T>(
                "", match(stmt(hasParent(
                              stmt(has(stmt(equalsNode(TypedNode)))).bind(""))),
                          *Node, Context)) != nullptr;
@@ -4216,7 +4323,7 @@ public:
     // Use the original typed pointer to verify we can pass pointers to subtypes
     // to equalsNode.
     const T *TypedNode = cast<T>(Node);
-    return selectFirst<const T>(
+    return selectFirst<T>(
                "", match(decl(hasParent(
                              decl(has(decl(equalsNode(TypedNode)))).bind(""))),
                          *Node, Context)) != nullptr;

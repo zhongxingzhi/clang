@@ -59,6 +59,9 @@ bool Windows::IsIntegratedAssemblerDefault() const {
 }
 
 bool Windows::IsUnwindTablesDefault() const {
+  // Emit unwind tables by default on Win64. All non-x86_32 Windows platforms
+  // such as ARM and PPC actually require unwind tables, but LLVM doesn't know
+  // how to generate them yet.
   return getArch() == llvm::Triple::x86_64;
 }
 

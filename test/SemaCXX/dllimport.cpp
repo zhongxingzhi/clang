@@ -1,7 +1,7 @@
-// RUN: %clang_cc1 -triple i686-win32     -fsyntax-only -verify -std=c++11 -DMS %s
-// RUN: %clang_cc1 -triple x86_64-win32   -fsyntax-only -verify -std=c++1y -DMS %s
-// RUN: %clang_cc1 -triple i686-mingw32   -fsyntax-only -verify -std=c++1y %s
-// RUN: %clang_cc1 -triple x86_64-mingw32 -fsyntax-only -verify -std=c++11 %s
+// RUN: %clang_cc1 -triple i686-win32     -fsyntax-only -verify -std=c++11 -Wunsupported-dll-base-class-template -DMS %s
+// RUN: %clang_cc1 -triple x86_64-win32   -fsyntax-only -verify -std=c++1y -Wunsupported-dll-base-class-template -DMS %s
+// RUN: %clang_cc1 -triple i686-mingw32   -fsyntax-only -verify -std=c++1y -Wunsupported-dll-base-class-template %s
+// RUN: %clang_cc1 -triple x86_64-mingw32 -fsyntax-only -verify -std=c++11 -Wunsupported-dll-base-class-template %s
 
 // Helper structs to make templates more expressive.
 struct ImplicitInst_Imported {};
@@ -75,7 +75,7 @@ __declspec(dllimport) extern int GlobalRedecl3; // expected-note{{previous decla
                       extern int GlobalRedecl3; // expected-warning{{'GlobalRedecl3' redeclared without 'dllimport' attribute: previous 'dllimport' ignored}}
 
                       extern int GlobalRedecl4; // expected-note{{previous declaration is here}}
-__declspec(dllimport) extern int GlobalRedecl4; // expected-error{{redeclaration of 'GlobalRedecl4' cannot add 'dllimport' attribute}}
+__declspec(dllimport) extern int GlobalRedecl4; // expected-warning{{redeclaration of 'GlobalRedecl4' should not add 'dllimport' attribute}}
 
 // External linkage is required.
 __declspec(dllimport) static int StaticGlobal; // expected-error{{'StaticGlobal' must have external linkage when declared 'dllimport'}}
@@ -224,10 +224,10 @@ __declspec(dllimport) void redecl3(); // expected-note{{previous declaration is 
                       void redecl3() {} // expected-warning{{'redecl3' redeclared without 'dllimport' attribute: previous 'dllimport' ignored}}
 
                       void redecl4(); // expected-note{{previous declaration is here}}
-__declspec(dllimport) void redecl4(); // expected-error{{redeclaration of 'redecl4' cannot add 'dllimport' attribute}}
+__declspec(dllimport) void redecl4(); // expected-warning{{redeclaration of 'redecl4' should not add 'dllimport' attribute}}
 
                       void redecl5(); // expected-note{{previous declaration is here}}
-__declspec(dllimport) inline void redecl5() {} // expected-error{{redeclaration of 'redecl5' cannot add 'dllimport' attribute}}
+__declspec(dllimport) inline void redecl5() {} // expected-warning{{redeclaration of 'redecl5' should not add 'dllimport' attribute}}
 
 // Friend functions
 struct FuncFriend {
@@ -240,8 +240,15 @@ struct FuncFriend {
 __declspec(dllimport) void friend1();
                       void friend2(); // expected-warning{{'friend2' redeclared without 'dllimport' attribute: previous 'dllimport' ignored}}
                       void friend3() {} // expected-warning{{'friend3' redeclared without 'dllimport' attribute: previous 'dllimport' ignored}}
-__declspec(dllimport) void friend4(); // expected-error{{redeclaration of 'friend4' cannot add 'dllimport' attribute}}
-__declspec(dllimport) inline void friend5() {} // expected-error{{redeclaration of 'friend5' cannot add 'dllimport' attribute}}
+__declspec(dllimport) void friend4(); // expected-warning{{redeclaration of 'friend4' should not add 'dllimport' attribute}}
+__declspec(dllimport) inline void friend5() {} // expected-warning{{redeclaration of 'friend5' should not add 'dllimport' attribute}}
+
+void __declspec(dllimport) friend6(); // expected-note{{previous declaration is here}} expected-note{{previous attribute is here}}
+void __declspec(dllimport) friend7();
+struct FuncFriend2 {
+  friend void friend6(); // expected-warning{{'friend6' redeclared without 'dllimport' attribute: previous 'dllimport' ignored}}
+  friend void ::friend7();
+};
 
 // Implicit declarations can be redeclared with dllimport.
 __declspec(dllimport) void* operator new(__SIZE_TYPE__ n);
@@ -974,7 +981,7 @@ class __declspec(dllimport) ImportClassWithDllMember {
 // expected-error@+4{{attribute 'dllimport' cannot be applied to member of 'dllexport' class}}
 // expected-error@+4{{attribute 'dllexport' cannot be applied to member of 'dllexport' class}}
 #endif
-class __declspec(dllexport) ExportClassWithDllMember {
+template <typename T> class __declspec(dllexport) ExportClassWithDllMember {
   void __declspec(dllimport) foo();
   void __declspec(dllexport) bar();
 };
@@ -1026,7 +1033,7 @@ class __declspec(dllimport) DerivedFromExportedTemplate : public ExportedClassTe
 
 #ifdef MS
 // expected-note@+4{{class template 'ClassTemplate<double>' was instantiated here}}
-// expected-warning@+4{{propagating dll attribute to already instantiated base class template without dll attribute is unsupported}}
+// expected-warning@+4{{propagating dll attribute to already instantiated base class template without dll attribute is not supported}}
 // expected-note@+3{{attribute is here}}
 #endif
 class DerivedFromTemplateD : public ClassTemplate<double> {};
@@ -1034,7 +1041,7 @@ class __declspec(dllimport) DerivedFromTemplateD2 : public ClassTemplate<double>
 
 #ifdef MS
 // expected-note@+4{{class template 'ClassTemplate<bool>' was instantiated here}}
-// expected-warning@+4{{propagating dll attribute to already instantiated base class template with different dll attribute is unsupported}}
+// expected-warning@+4{{propagating dll attribute to already instantiated base class template with different dll attribute is not supported}}
 // expected-note@+3{{attribute is here}}
 #endif
 class __declspec(dllexport) DerivedFromTemplateB : public ClassTemplate<bool> {};
@@ -1061,7 +1068,7 @@ template <typename T> struct ExplicitlyImportInstantiatedTemplate { void func() 
 template struct __declspec(dllimport) ExplicitlyImportInstantiatedTemplate<int>;
 
 #ifdef MS
-// expected-warning@+3{{propagating dll attribute to explicitly specialized base class template without dll attribute is unsupported}}
+// expected-warning@+3{{propagating dll attribute to explicitly specialized base class template without dll attribute is not supported}}
 // expected-note@+2{{attribute is here}}
 #endif
 struct __declspec(dllimport) DerivedFromExplicitlySpecializedTemplate : public ExplicitlySpecializedTemplate<int> {};
@@ -1073,7 +1080,7 @@ struct __declspec(dllimport) DerivedFromExplicitlyExportSpecializedTemplate : pu
 struct __declspec(dllimport) DerivedFromExplicitlyImportSpecializedTemplate : public ExplicitlyImportSpecializedTemplate<int> {};
 
 #ifdef MS
-// expected-warning@+3{{propagating dll attribute to already instantiated base class template without dll attribute is unsupported}}
+// expected-warning@+3{{propagating dll attribute to already instantiated base class template without dll attribute is not supported}}
 // expected-note@+2{{attribute is here}}
 #endif
 struct __declspec(dllimport) DerivedFromExplicitlyInstantiatedTemplate : public ExplicitlyInstantiatedTemplate<int> {};

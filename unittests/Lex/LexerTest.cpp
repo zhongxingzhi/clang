@@ -57,17 +57,17 @@ protected:
       TargetOpts(new TargetOptions) 
   {
     TargetOpts->Triple = "x86_64-apple-darwin11.1.0";
-    Target = TargetInfo::CreateTargetInfo(Diags, &*TargetOpts);
+    Target = TargetInfo::CreateTargetInfo(Diags, TargetOpts);
   }
 
   std::vector<Token> CheckLex(StringRef Source,
                               ArrayRef<tok::TokenKind> ExpectedTokens) {
-    MemoryBuffer *buf = MemoryBuffer::getMemBuffer(Source);
-    SourceMgr.setMainFileID(SourceMgr.createFileID(buf));
+    std::unique_ptr<MemoryBuffer> Buf = MemoryBuffer::getMemBuffer(Source);
+    SourceMgr.setMainFileID(SourceMgr.createFileID(std::move(Buf)));
 
     VoidModuleLoader ModLoader;
     HeaderSearch HeaderInfo(new HeaderSearchOptions, SourceMgr, Diags, LangOpts,
-                            Target.getPtr());
+                            Target.get());
     Preprocessor PP(new PreprocessorOptions(), Diags, LangOpts, SourceMgr,
                     HeaderInfo, ModLoader, /*IILookup =*/nullptr,
                     /*OwnsHeaderSearch =*/false);
@@ -108,7 +108,7 @@ protected:
   DiagnosticsEngine Diags;
   SourceManager SourceMgr;
   LangOptions LangOpts;
-  IntrusiveRefCntPtr<TargetOptions> TargetOpts;
+  std::shared_ptr<TargetOptions> TargetOpts;
   IntrusiveRefCntPtr<TargetInfo> Target;
 };
 

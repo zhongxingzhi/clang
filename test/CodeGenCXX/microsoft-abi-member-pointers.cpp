@@ -595,15 +595,15 @@ void (C::*getmp())() {
   return &C::g;
 }
 // CHECK-LABEL: define i64 @"\01?getmp@Test4@@YAP8C@1@AEXXZXZ"()
-// CHECK: store { i8*, i32 } { i8* bitcast (void (i8*)* @"\01??_9C@Test4@@$BA@AE" to i8*), i32 4 }, { i8*, i32 }* %{{.*}}
+// CHECK: store { i8*, i32 } { i8* bitcast (void (%"struct.Test4::C"*, ...)* @"\01??_9C@Test4@@$BA@AE" to i8*), i32 4 }, { i8*, i32 }* %{{.*}}
 //
 
-// CHECK-LABEL: define linkonce_odr x86_thiscallcc void @"\01??_9C@Test4@@$BA@AE"(i8*)
+// CHECK-LABEL: define linkonce_odr x86_thiscallcc void @"\01??_9C@Test4@@$BA@AE"(%"struct.Test4::C"* %this, ...)
 // CHECK-NOT:  getelementptr
-// CHECK:  load void (i8*)*** %{{.*}}
-// CHECK:  getelementptr inbounds void (i8*)** %{{.*}}, i64 0
+// CHECK:  load void (%"struct.Test4::C"*, ...)*** %{{.*}}
+// CHECK:  getelementptr inbounds void (%"struct.Test4::C"*, ...)** %{{.*}}, i64 0
 // CHECK-NOT:  getelementptr
-// CHECK:  call x86_thiscallcc void %
+// CHECK:  musttail call x86_thiscallcc void (%"struct.Test4::C"*, ...)* %
 
 }
 
@@ -628,6 +628,34 @@ struct B : public A {};
 void test() { void (B::*a)() = &B::f; }
 // CHECK-LABEL: define void @"\01?test@pr20007_kw@@YAXXZ"
 // CHECK: store i8* bitcast (void (%"struct.pr20007_kw::A"*)* @"\01?f@A@pr20007_kw@@QAEXXZ" to i8*)
+}
+
+namespace pr20007_pragma {
+struct A {
+  void f();
+  void f(int);
+};
+struct B : public A {};
+void test() { (void)(void (B::*)()) &B::f; }
+#pragma pointers_to_members(full_generality, virtual_inheritance)
+static_assert(sizeof(int B::*) == 4, "");
+static_assert(sizeof(int A::*) == 4, "");
+#pragma pointers_to_members(best_case)
+// CHECK-LABEL: define void @"\01?test@pr20007_pragma@@YAXXZ"
+}
+
+namespace pr20007_pragma2 {
+struct A {
+};
+struct B : public A {
+  void f();
+};
+void test() { (void)&B::f; }
+#pragma pointers_to_members(full_generality, virtual_inheritance)
+static_assert(sizeof(int B::*) == 4, "");
+static_assert(sizeof(int A::*) == 12, "");
+#pragma pointers_to_members(best_case)
+// CHECK-LABEL: define void @"\01?test@pr20007_pragma2@@YAXXZ"
 }
 
 namespace pr19987 {

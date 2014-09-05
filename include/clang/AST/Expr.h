@@ -2212,11 +2212,11 @@ public:
   /// getArg - Return the specified argument.
   Expr *getArg(unsigned Arg) {
     assert(Arg < NumArgs && "Arg access out of range!");
-    return cast<Expr>(SubExprs[Arg+getNumPreArgs()+PREARGS_START]);
+    return cast_or_null<Expr>(SubExprs[Arg + getNumPreArgs() + PREARGS_START]);
   }
   const Expr *getArg(unsigned Arg) const {
     assert(Arg < NumArgs && "Arg access out of range!");
-    return cast<Expr>(SubExprs[Arg+getNumPreArgs()+PREARGS_START]);
+    return cast_or_null<Expr>(SubExprs[Arg + getNumPreArgs() + PREARGS_START]);
   }
 
   /// setArg - Set the specified argument.
@@ -2256,8 +2256,8 @@ public:
   /// interface.  This provides efficient reverse iteration of the
   /// subexpressions.  This is currently used for CFG construction.
   ArrayRef<Stmt*> getRawSubExprs() {
-    return ArrayRef<Stmt*>(SubExprs,
-                           getNumPreArgs() + PREARGS_START + getNumArgs());
+    return llvm::makeArrayRef(SubExprs,
+                              getNumPreArgs() + PREARGS_START + getNumArgs());
   }
 
   /// getNumCommas - Return the number of commas that must have been present in
@@ -4165,6 +4165,17 @@ public:
   const_designators_iterator designators_begin() const { return Designators; }
   const_designators_iterator designators_end() const {
     return Designators + NumDesignators;
+  }
+
+  typedef llvm::iterator_range<designators_iterator> designators_range;
+  designators_range designators() {
+    return designators_range(designators_begin(), designators_end());
+  }
+
+  typedef llvm::iterator_range<const_designators_iterator>
+          designators_const_range;
+  designators_const_range designators() const {
+    return designators_const_range(designators_begin(), designators_end());
   }
 
   typedef std::reverse_iterator<designators_iterator>

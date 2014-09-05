@@ -91,7 +91,7 @@ feature) or 0 if not.  They can be used like this:
 
 .. _langext-has-feature-back-compat:
 
-For backwards compatibility reasons, ``__has_feature`` can also be used to test
+For backward compatibility, ``__has_feature`` can also be used to test
 for support for non-standardized features, i.e. features not prefixed ``c_``,
 ``cxx_`` or ``objc_``.
 
@@ -357,23 +357,27 @@ The table below shows the support for each operation by vector extension.  A
 dash indicates that an operation is not accepted according to a corresponding
 specification.
 
-============================== ====== ======= === ====
-         Opeator               OpenCL AltiVec GCC NEON
-============================== ====== ======= === ====
-[]                              yes     yes   yes  --
-unary operators +, --           yes     yes   yes  --
-++, -- --                       yes     yes   yes  --
-+,--,*,/,%                      yes     yes   yes  --
-bitwise operators &,|,^,~       yes     yes   yes  --
->>,<<                           yes     yes   yes  --
-!, &&, ||                       no      --    --   --
-==, !=, >, <, >=, <=            yes     yes   --   --
-=                               yes     yes   yes yes
-:?                              yes     --    --   --
-sizeof                          yes     yes   yes yes
-============================== ====== ======= === ====
+============================== ======= ======= ======= =======
+         Opeator               OpenCL  AltiVec   GCC    NEON
+============================== ======= ======= ======= =======
+[]                               yes     yes     yes     --
+unary operators +, --            yes     yes     yes     --
+++, -- --                        yes     yes     yes     --
++,--,*,/,%                       yes     yes     yes     --
+bitwise operators &,|,^,~        yes     yes     yes     --
+>>,<<                            yes     yes     yes     --
+!, &&, ||                        yes     --      --      --
+==, !=, >, <, >=, <=             yes     yes     --      --
+=                                yes     yes     yes     yes
+:?                               yes     --      --      --
+sizeof                           yes     yes     yes     yes
+C-style cast                     yes     yes     yes     no
+reinterpret_cast                 yes     no      yes     no
+static_cast                      yes     no      yes     no
+const_cast                       no      no      no      no
+============================== ======= ======= ======= =======
 
-See also :ref:`langext-__builtin_shufflevector`.
+See also :ref:`langext-__builtin_shufflevector`, :ref:`langext-__builtin_convertvector`.
 
 Messages on ``deprecated`` and ``unavailable`` Attributes
 =========================================================
@@ -1324,6 +1328,8 @@ indices specified.
 
 Query for this feature with ``__has_builtin(__builtin_shufflevector)``.
 
+.. _langext-__builtin_convertvector:
+
 ``__builtin_convertvector``
 ---------------------------
 
@@ -1354,7 +1360,7 @@ type must have the same number of elements.
   // convert from a vector of 4 shorts to a vector of 4 floats.
   __builtin_convertvector(vs, vector4float)
   // equivalent to:
-  (vector4float) { (float) vf[0], (float) vf[1], (float) vf[2], (float) vf[3] }
+  (vector4float) { (float) vs[0], (float) vs[1], (float) vs[2], (float) vs[3] }
 
 **Description**:
 
@@ -1580,7 +1586,9 @@ instructions for implementing atomic operations.
 .. code-block:: c
 
   T __builtin_arm_ldrex(const volatile T *addr);
+  T __builtin_arm_ldaex(const volatile T *addr);
   int __builtin_arm_strex(T val, volatile T *addr);
+  int __builtin_arm_stlex(T val, volatile T *addr);
   void __builtin_arm_clrex(void);
 
 The types ``T`` currently supported are:
@@ -1589,11 +1597,11 @@ The types ``T`` currently supported are:
 * Pointer types.
 
 Note that the compiler does not guarantee it will not insert stores which clear
-the exclusive monitor in between an ``ldrex`` and its paired ``strex``. In
-practice this is only usually a risk when the extra store is on the same cache
-line as the variable being modified and Clang will only insert stack stores on
-its own, so it is best not to use these operations on variables with automatic
-storage duration.
+the exclusive monitor in between an ``ldrex`` type operation and its paired
+``strex``. In practice this is only usually a risk when the extra store is on
+the same cache line as the variable being modified and Clang will only insert
+stack stores on its own, so it is best not to use these operations on variables
+with automatic storage duration.
 
 Also, loads and stores may be implicit in code written between the ``ldrex`` and
 ``strex``. Clang will not necessarily mitigate the effects of these either, so
@@ -1631,6 +1639,19 @@ Target-Specific Extensions
 ==========================
 
 Clang supports some language features conditionally on some targets.
+
+ARM/AArch64 Language Extensions
+-------------------------------
+
+Memory Barrier Intrinsics
+^^^^^^^^^^^^^^^^^^^^^^^^^
+Clang implements the ``__dmb``, ``__dsb`` and ``__isb`` intrinsics as defined
+in the `ARM C Language Extensions Release 2.0
+<http://infocenter.arm.com/help/topic/com.arm.doc.ihi0053c/IHI0053C_acle_2_0.pdf>`_.
+Note that these intrinsics are implemented as motion barriers that block
+reordering of memory accesses and side effect instructions. Other instructions
+like simple arithmatic may be reordered around the intrinsic. If you expect to
+have no reordering at all, use inline assembly instead.
 
 X86/X86-64 Language Extensions
 ------------------------------
@@ -1828,7 +1849,7 @@ iterations. Full unrolling is only possible if the loop trip count is known at
 compile time. Partial unrolling replicates the loop body within the loop and
 reduces the trip count.
 
-If ``unroll(enable)`` is specified the unroller will attempt to fully unroll the
+If ``unroll(full)`` is specified the unroller will attempt to fully unroll the
 loop if the trip count is known at compile time. If the loop count is not known
 or the fully unrolled code size is greater than the limit specified by the
 `-pragma-unroll-threshold` command line option the loop will be partially
@@ -1836,7 +1857,7 @@ unrolled subject to the same limit.
 
 .. code-block:: c++
 
-  #pragma clang loop unroll(enable)
+  #pragma clang loop unroll(full)
   for(...) {
     ...
   }

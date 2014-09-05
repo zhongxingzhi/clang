@@ -209,11 +209,13 @@ static bool format(StringRef FileName) {
       IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs),
       new DiagnosticOptions);
   SourceManager Sources(Diagnostics, Files);
-  std::unique_ptr<MemoryBuffer> Code;
-  if (std::error_code ec = MemoryBuffer::getFileOrSTDIN(FileName, Code)) {
-    llvm::errs() << ec.message() << "\n";
+  ErrorOr<std::unique_ptr<MemoryBuffer>> CodeOrErr =
+      MemoryBuffer::getFileOrSTDIN(FileName);
+  if (std::error_code EC = CodeOrErr.getError()) {
+    llvm::errs() << EC.message() << "\n";
     return true;
   }
+  std::unique_ptr<llvm::MemoryBuffer> Code = std::move(CodeOrErr.get());
   if (Code->getBufferSize() == 0)
     return false; // Empty files are formatted correctly.
   FileID ID = createInMemoryFile(FileName, Code.get(), Sources, Files);
@@ -224,7 +226,7 @@ static bool format(StringRef FileName) {
   FormatStyle FormatStyle = getStyle(
       Style, (FileName == "-") ? AssumeFilename : FileName, FallbackStyle);
   Lexer Lex(ID, Sources.getBuffer(ID), Sources,
-            getFormattingLangOpts(FormatStyle.Standard));
+            getFormattingLangOpts(FormatStyle));
   tooling::Replacements Replaces = reformat(FormatStyle, Lex, Sources, Ranges);
   if (OutputXML) {
     llvm::outs()

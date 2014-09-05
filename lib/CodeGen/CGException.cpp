@@ -409,8 +409,7 @@ void CodeGenFunction::EmitCXXThrowExpr(const CXXThrowExpr *E,
   }
 
   if (!E->getSubExpr()) {
-    EmitNoreturnRuntimeCallOrInvoke(getReThrowFn(CGM),
-                                    ArrayRef<llvm::Value*>());
+    EmitNoreturnRuntimeCallOrInvoke(getReThrowFn(CGM), None);
 
     // throw is an expression, and the expression emitters expect us
     // to leave ourselves at a valid insertion point.
@@ -1631,4 +1630,8 @@ llvm::BasicBlock *CodeGenFunction::getEHResumeBlock(bool isCleanup) {
 
 void CodeGenFunction::EmitSEHTryStmt(const SEHTryStmt &S) {
   CGM.ErrorUnsupported(&S, "SEH __try");
+}
+
+void CodeGenFunction::EmitSEHLeaveStmt(const SEHLeaveStmt &S) {
+  CGM.ErrorUnsupported(&S, "SEH __leave");
 }
