@@ -917,6 +917,9 @@ private:
   /// \brief Return the type of the given token assuming it is * or &.
   TokenType determineStarAmpUsage(const FormatToken &Tok, bool IsExpression,
                                   bool InTemplateArgument) {
+    if (Style.Language == FormatStyle::LK_JavaScript)
+      return TT_BinaryOperator;
+
     const FormatToken *PrevToken = Tok.getPreviousNonComment();
     if (!PrevToken)
       return TT_UnaryOperator;
@@ -1110,12 +1113,16 @@ private:
   /// and other tokens that we treat like binary operators.
   int getCurrentPrecedence() {
     if (Current) {
+      const FormatToken *NextNonComment = Current->getNextNonComment();
       if (Current->Type == TT_ConditionalExpr)
         return prec::Conditional;
+      else if (NextNonComment && NextNonComment->is(tok::colon) &&
+               NextNonComment->Type == TT_DictLiteral)
+        return prec::Comma;
       else if (Current->is(tok::semi) || Current->Type == TT_InlineASMColon ||
                Current->Type == TT_SelectorName ||
-               (Current->is(tok::comment) && Current->getNextNonComment() &&
-                Current->getNextNonComment()->Type == TT_SelectorName))
+               (Current->is(tok::comment) && NextNonComment &&
+                NextNonComment->Type == TT_SelectorName))
         return 0;
       else if (Current->Type == TT_RangeBasedForLoopColon)
         return prec::Comma;
@@ -1646,6 +1653,8 @@ bool TokenAnnotator::spaceRequiredBefore(const AnnotatedLine &Line,
     return !Line.First->isOneOf(tok::kw_case, tok::kw_default) &&
            Tok.getNextNonComment() && Tok.Type != TT_ObjCMethodExpr &&
            !Tok.Previous->is(tok::question) &&
+           !(Tok.Type == TT_InlineASMColon &&
+             Tok.Previous->is(tok::coloncolon)) &&
            (Tok.Type != TT_DictLiteral || Style.SpacesInContainerLiterals);
   if (Tok.Previous->Type == TT_UnaryOperator)
     return Tok.Type == TT_BinaryOperator;
@@ -1844,16 +1853,21 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   if (Left.is(tok::greater) && Right.is(tok::greater) &&
       Left.Type != TT_TemplateCloser)
     return false;
-  if (Right.Type == TT_BinaryOperator && Style.BreakBeforeBinaryOperators)
+  if (Right.Type == TT_BinaryOperator &&
+      Style.BreakBeforeBinaryOperators != FormatStyle::BOS_None &&
+      (Style.BreakBeforeBinaryOperators == FormatStyle::BOS_All ||
+       Right.getPrecedence() != prec::Assignment))
     return true;
   if (Left.Type == TT_ArrayInitializerLSquare)
     return true;
   if (Right.is(tok::kw_typename) && Left.isNot(tok::kw_const))
     return true;
-  return (Left.isBinaryOperator() &&
-          !Left.isOneOf(tok::arrowstar, tok::lessless) &&
-          !Style.BreakBeforeBinaryOperators) ||
-         Left.isOneOf(tok::comma, tok::coloncolon, tok::semi, tok::l_brace,
+  if (Left.isBinaryOperator() && !Left.isOneOf(tok::arrowstar, tok::lessless) &&
+      Style.BreakBeforeBinaryOperators != FormatStyle::BOS_All &&
+      (Style.BreakBeforeBinaryOperators == FormatStyle::BOS_None ||
+       Left.getPrecedence() == prec::Assignment))
+    return true;
+  return Left.isOneOf(tok::comma, tok::coloncolon, tok::semi, tok::l_brace,
                       tok::kw_class, tok::kw_struct) ||
          Right.isMemberAccess() ||
          Right.isOneOf(tok::lessless, tok::colon, tok::l_square, tok::at) ||

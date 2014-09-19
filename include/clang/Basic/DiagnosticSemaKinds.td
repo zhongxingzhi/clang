@@ -175,6 +175,9 @@ def warn_unused_parameter : Warning<"unused parameter %0">,
   InGroup<UnusedParameter>, DefaultIgnore;
 def warn_unused_variable : Warning<"unused variable %0">,
   InGroup<UnusedVariable>, DefaultIgnore;
+def warn_unused_local_typedef : Warning<
+  "unused %select{typedef|type alias}0 %1">,
+  InGroup<UnusedLocalTypedef>, DefaultIgnore;
 def warn_unused_property_backing_ivar : 
   Warning<"ivar %0 which backs the property is not "
   "referenced in this property's accessor">,
@@ -448,8 +451,12 @@ def note_strncat_wrong_size : Note<
   "the terminating null byte">;
 
 def warn_assume_side_effects : Warning<
-  "the argument to __assume has side effects that will be discarded">,
+  "the argument to %0 has side effects that will be discarded">,
   InGroup<DiagGroup<"assume">>;
+
+def warn_memcpy_chk_overflow : Warning<
+  "%0 will always overflow destination buffer">,
+  InGroup<DiagGroup<"builtin-memcpy-chk-size">>;
 
 /// main()
 // static main() is not an error in C, just in C++.
@@ -716,6 +723,11 @@ def err_duplicate_method_decl : Error<"duplicate declaration of method %0">;
 def warn_duplicate_method_decl : 
   Warning<"multiple declarations of method %0 found and ignored">, 
   InGroup<MethodDuplicate>, DefaultIgnore;
+def warn_objc_cdirective_format_string :
+  Warning<"using %0 directive in %select{NSString|CFString}1 "
+          "which is being passed as a formatting argument to the formatting "
+          "%select{method|CFfunction}2">,
+  InGroup<ObjCCStringFormat>, DefaultIgnore;
 def err_objc_var_decl_inclass : 
     Error<"cannot declare variable inside @interface or @protocol">;
 def error_missing_method_context : Error<
@@ -1110,7 +1122,7 @@ def ext_ms_using_declaration_inaccessible : ExtWarn<
 def err_access_ctor : Error<
   "calling a %select{private|protected}0 constructor of class %2">, 
   AccessControl;
-def ext_rvalue_to_reference_access_ctor : ExtWarn<
+def ext_rvalue_to_reference_access_ctor : Extension<
   "C++98 requires an accessible copy constructor for class %2 when binding "
   "a reference to a temporary; was %select{private|protected}0">,
   AccessControl, InGroup<BindToTemporaryCopy>;
@@ -1537,7 +1549,7 @@ def err_temp_copy_no_viable : Error<
   "returning object|throwing object|copying member subobject|copying array "
   "element|allocating object|copying temporary|initializing base subobject|"
   "initializing vector element|capturing value}0 of type %1">;
-def ext_rvalue_to_reference_temp_copy_no_viable : ExtWarn<
+def ext_rvalue_to_reference_temp_copy_no_viable : Extension<
   "no viable constructor %select{copying variable|copying parameter|"
   "returning object|throwing object|copying member subobject|copying array "
   "element|allocating object|copying temporary|initializing base subobject|"
@@ -2075,8 +2087,9 @@ def err_no_accessor_for_property : Error<
 def error_cannot_find_suitable_accessor : Error<
   "cannot find suitable %select{getter|setter}0 for property %1">;
 
-def err_attribute_aligned_not_power_of_two : Error<
+def err_alignment_not_power_of_two : Error<
   "requested alignment is not a power of 2">;
+
 def err_attribute_aligned_too_great : Error<
   "requested alignment must be %0 bytes or smaller">;
 def warn_redeclaration_without_attribute_prev_attribute_ignored : Warning<
@@ -2336,6 +2349,16 @@ def warn_cannot_resolve_lock : Warning<
 def warn_acquire_requires_negative_cap : Warning<
   "acquiring %0 '%1' requires negative capability '%2'">,
   InGroup<ThreadSafetyNegative>, DefaultIgnore;
+
+// Thread safety warnings on pass by reference
+def warn_guarded_pass_by_reference : Warning<
+  "passing variable '%1' by reference requires holding %0 "
+  "%select{'%2'|'%2' exclusively}3">,
+  InGroup<ThreadSafetyReference>, DefaultIgnore;
+def warn_pt_guarded_pass_by_reference : Warning<
+  "passing the value that '%1' points to by reference requires holding %0 "
+  "%select{'%2'|'%2' exclusively}3">,
+  InGroup<ThreadSafetyReference>, DefaultIgnore;
 
 // Imprecise thread safety warnings
 def warn_variable_requires_lock : Warning<
@@ -4110,25 +4133,28 @@ def err_undeclared_label_use : Error<"use of undeclared label %0">;
 def warn_unused_label : Warning<"unused label %0">,
   InGroup<UnusedLabel>, DefaultIgnore;
 
-def err_goto_into_protected_scope : Error<"goto into protected scope">;
-def ext_goto_into_protected_scope : ExtWarn<"goto into protected scope">,
+def err_goto_into_protected_scope : Error<
+  "cannot jump from this goto statement to its label">;
+def ext_goto_into_protected_scope : ExtWarn<
+  "jump from this goto statement to its label is a Microsoft extension">,
   InGroup<Microsoft>;
 def warn_cxx98_compat_goto_into_protected_scope : Warning<
-  "goto would jump into protected scope in C++98">,
+  "jump from this goto statement to its label is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_switch_into_protected_scope : Error<
-  "switch case is in protected scope">;
+  "cannot jump from switch statement to this case label">;
 def warn_cxx98_compat_switch_into_protected_scope : Warning<
-  "switch case would be in a protected scope in C++98">,
+  "jump from switch statement to this case label is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_indirect_goto_without_addrlabel : Error<
   "indirect goto in function with no address-of-label expressions">;
 def err_indirect_goto_in_protected_scope : Error<
-  "indirect goto might cross protected scopes">;
+  "cannot jump from this indirect goto statement to one of its possible targets">;
 def warn_cxx98_compat_indirect_goto_in_protected_scope : Warning<
-  "indirect goto might cross protected scopes in C++98">,
-  InGroup<CXX98Compat>, DefaultIgnore;
-def note_indirect_goto_target : Note<"possible target of indirect goto">;
+  "jump from this indirect goto statement to one of its possible targets "
+  "is incompatible with C++98">, InGroup<CXX98Compat>, DefaultIgnore;
+def note_indirect_goto_target : Note<
+  "possible target of indirect goto statement">;
 def note_protected_by_variable_init : Note<
   "jump bypasses variable initialization">;
 def note_protected_by_variable_nontriv_destructor : Note<
@@ -6035,6 +6061,8 @@ let CategoryName = "Inline Assembly Issue" in {
   def err_asm_bad_register_type : Error<"bad type for named register variable">;
   def err_asm_invalid_input_size : Error<
     "invalid input size for constraint '%0'">;
+  def err_asm_invalid_output_size : Error<
+    "invalid output size for constraint '%0'">;
   def err_invalid_asm_cast_lvalue : Error<
     "invalid use of a cast in a inline asm context requiring an l-value: "
     "remove the cast or build with -fheinous-gnu-extensions">;

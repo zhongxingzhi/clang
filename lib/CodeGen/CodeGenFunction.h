@@ -1401,18 +1401,7 @@ public:
                             CGM.getTBAAInfo(T));
   }
 
-  LValue MakeNaturalAlignAddrLValue(llvm::Value *V, QualType T) {
-    CharUnits Alignment;
-    if (!T->isIncompleteType()) {
-      Alignment = getContext().getTypeAlignInChars(T);
-      unsigned MaxAlign = getContext().getLangOpts().MaxTypeAlign;
-      if (MaxAlign && Alignment.getQuantity() > MaxAlign &&
-          !getContext().isAlignmentRequired(T))
-        Alignment = CharUnits::fromQuantity(MaxAlign);
-    }
-    return LValue::MakeAddr(V, T, Alignment, getContext(),
-                            CGM.getTBAAInfo(T));
-  }
+  LValue MakeNaturalAlignAddrLValue(llvm::Value *V, QualType T);
 
   /// CreateTempAlloca - This creates a alloca and inserts it into the entry
   /// block. The caller is responsible for setting an appropriate alignment on
@@ -1743,6 +1732,10 @@ public:
                                        bool isInc, bool isPre);
   ComplexPairTy EmitComplexPrePostIncDec(const UnaryOperator *E, LValue LV,
                                          bool isInc, bool isPre);
+
+  void EmitAlignmentAssumption(llvm::Value *PtrValue, unsigned Alignment,
+                               llvm::Value *OffsetValue = nullptr);
+
   //===--------------------------------------------------------------------===//
   //                            Declaration Emission
   //===--------------------------------------------------------------------===//
@@ -1935,6 +1928,7 @@ public:
   void EmitOMPParallelDirective(const OMPParallelDirective &S);
   void EmitOMPSimdDirective(const OMPSimdDirective &S);
   void EmitOMPForDirective(const OMPForDirective &S);
+  void EmitOMPForSimdDirective(const OMPForSimdDirective &S);
   void EmitOMPSectionsDirective(const OMPSectionsDirective &S);
   void EmitOMPSectionDirective(const OMPSectionDirective &S);
   void EmitOMPSingleDirective(const OMPSingleDirective &S);
@@ -2621,6 +2615,7 @@ public:
   void EmitCallArgs(CallArgList &Args, const T *CallArgTypeInfo,
                     CallExpr::const_arg_iterator ArgBeg,
                     CallExpr::const_arg_iterator ArgEnd,
+                    const FunctionDecl *CalleeDecl = nullptr,
                     unsigned ParamsToSkip = 0, bool ForceColumnInfo = false) {
     SmallVector<QualType, 16> ArgTypes;
     CallExpr::const_arg_iterator Arg = ArgBeg;
@@ -2669,13 +2664,15 @@ public:
     for (; Arg != ArgEnd; ++Arg)
       ArgTypes.push_back(Arg->getType());
 
-    EmitCallArgs(Args, ArgTypes, ArgBeg, ArgEnd, ForceColumnInfo);
+    EmitCallArgs(Args, ArgTypes, ArgBeg, ArgEnd, CalleeDecl, ParamsToSkip,
+                 ForceColumnInfo);
   }
 
   void EmitCallArgs(CallArgList &Args, ArrayRef<QualType> ArgTypes,
                     CallExpr::const_arg_iterator ArgBeg,
                     CallExpr::const_arg_iterator ArgEnd,
-                    bool ForceColumnInfo = false);
+                    const FunctionDecl *CalleeDecl = nullptr,
+                    unsigned ParamsToSkip = 0, bool ForceColumnInfo = false);
 
 private:
   const TargetCodeGenInfo &getTargetHooks() const {
